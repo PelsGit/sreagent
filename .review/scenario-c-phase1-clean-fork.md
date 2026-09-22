@@ -1,7 +1,14 @@
-# Scenario C Phase 1 clean-fork findings
+# Scenario C Phase 1 clean-fork feedback and proposed changes
 
-Review target: `PelsGit/sreagent` at `df8cd30`, using `docs/scenario-c-private-gitops.md` as a first-time operator.
-Audience assumed: technical engineers and architects evaluating Azure SRE Agent.
+This is upstream feedback produced by running the documentation from a real fork.
+
+- **Upstream repository:** `rutgerpels/sreagent`
+- **Test fork:** `PelsGit/sreagent`
+- **Reviewed upstream commit:** `df8cd30`
+- **Primary document:** `docs/scenario-c-private-gitops.md`
+- **Audience assumed:** technical engineers and architects evaluating Azure SRE Agent
+
+The fork was treated as an independent repository: GitHub Actions settings, OIDC federation, repository variables, secrets, runners, and GitHub App installation were not assumed to transfer from upstream.
 
 ## Phase 1 execution status
 
@@ -15,7 +22,94 @@ Audience assumed: technical engineers and architects evaluating Azure SRE Agent.
 
 No Scenario C application/state resources were deployed; Phase 2 was not started.
 
-## Findings to fold into one upstream PR
+## Recommended upstream change set
+
+I would split the correction into four reviewable commits while keeping them in one pull request.
+
+### Commit 1 — make clean-fork bootstrap executable
+
+**Files:** `docs/scenario-c-private-gitops.md`, `docs/deployment-reference.md`, plus a new runner-bootstrap reference or script.
+
+1. Add a **clean-fork preflight** before the current healthy-baseline check:
+   - confirm the fork is synchronized and `main` is the default branch;
+   - enable Actions and verify all required workflows are active;
+   - confirm the operator can manage Actions variables, secrets, and runners;
+   - state explicitly that upstream secrets, variables, OIDC trust, runners, and App installations do not transfer to a fork.
+2. Add an executable **OIDC bootstrap** for a user-assigned managed identity. Show the exact issuer, audience, and subject:
+
+   ```text
+   issuer:   https://token.actions.githubusercontent.com
+   audience: api://AzureADTokenExchange
+   subject:  repo:<fork-owner>/<repository>:ref:refs/heads/main
+   ```
+
+   Include commands to create the identity and federated credential, assign the tested Azure roles/scopes, set the three repository variables, and read everything back for verification. State that the production dispatch must run from the trusted `main` ref.
+3. Replace “Owner or User Access Administrator” with separate requirements for:
+   - the human bootstrap operator; and
+   - the OIDC deployment identity.
+
+   Use **Owner**, or **Contributor plus User Access Administrator**, at the scopes the workflow actually touches. Explicitly cover subscription-scoped role assignments and write access to the shared runner-network resource group.
+4. Either provide a supported x64 runner bootstrap or change the prerequisite to “pre-provisioned.” A supported bootstrap should create a dedicated runner resource group, VNet, runner subnet, private-endpoint subnet, x64 VM, runner service, and the five fixed labels. Include start/stop and removal instructions.
+5. Publish a tested package/preflight script and network destination reference for a restricted enterprise runner. Verify Docker daemon access as the runner service account, not just `docker --version`.
+
+**Acceptance criteria:** a new fork with no inherited settings can follow the documented steps from zero to an online idle runner and a statically verified OIDC configuration without consulting the upstream author's environment.
+
+### Commit 2 — fail early on invalid Scenario C inputs
+
+**Files:** `.github/workflows/deploy.yml`, `.github/workflows/apply-infra.yml`, `infra/variables.tf` or Terraform `check` blocks.
+
+1. Remove the `agentrg`, `agent-vnet`, and `private-endpoints` fallbacks for Scenario C. Fail validation with the exact missing repository-variable name.
+2. Validate the application address plan as one unit:
+   - every subnet is contained in `APP_VNET_ADDRESS_SPACE`;
+   - the three application subnets do not overlap;
+   - the application VNet does not overlap the runner VNet;
+   - delegated/private-endpoint subnet sizes meet the documented minimums.
+3. Replace the backend role-assignment `|| true` with explicit idempotency:
+   - query for the assignment;
+   - create it only when absent;
+   - fail immediately with an authorization-specific message when creation fails.
+4. Add a runner preflight step that reports missing executables, Docker socket access, DNS resolution, and required outbound endpoints before Terraform changes Azure.
+
+**Acceptance criteria:** missing variables, bad CIDRs, missing tools, and missing Azure authorization fail in validation/preflight with an actionable error before state bootstrap or resource creation.
+
+### Commit 3 — make shared private DNS reusable
+
+**Files:** `.github/actions/discover-private-dns-zones/action.yml`, `.github/workflows/deploy.yml`, and the Scenario C networking inputs/docs.
+
+Extend shared-zone discovery to `privatelink.blob.core.windows.net`, or add a required input for an existing Blob private DNS zone. Reuse an enterprise-managed zone/link rather than trying to attach the runner VNet to a second zone for the same namespace. Document subnet capacity, private-endpoint policy, DNS, peering, subscription, and resource-group permission assumptions.
+
+**Acceptance criteria:** Scenario C can bootstrap state when the runner VNet is already linked to centrally managed Blob, ACR, and Key Vault private DNS zones in other resource groups.
+
+### Commit 4 — correct security claims and deployment output
+
+**Files:** `docs/scenario-c-private-gitops.md`, `README.md`, `.github/workflows/deploy.yml`, and any Scenario C talk-track text.
+
+1. Replace the absolute “Reader-only / cannot mutate Azure because of RBAC” statement with the exact model:
+   - workload access at the demo resource group is Reader;
+   - both agent identities receive Monitoring Contributor at subscription scope for the incident lifecycle;
+   - that built-in role has a residual monitoring write surface;
+   - the reconciled tool policy is therefore a required guardrail, not merely defense in depth over a fully read-only identity.
+2. Decide whether the subscription-wide Monitoring Contributor grant is genuinely required for both identities. If not, reduce it. If it is required, document and demonstrate the exception rather than presenting RBAC as absolute prevention.
+3. Fix the deployment summary to say the GitHub App PEM is imported as a Key Vault **key**, not stored as a secret.
+4. Change the Code Access statement to: without Code Access, the agent can investigate and describe a fix, but cannot create the remediation branch and pull request.
+5. Add the persistent-runner threat-model note: repository-restricted runner group, trusted workflow changes, dedicated/ephemeral runner where possible, and best-effort—not guaranteed—PEM deletion.
+
+**Acceptance criteria:** the documentation, Terraform grants, workflow summary, and on-stage security claims describe the same effective permissions and credential flow.
+
+## Suggested test plan for the upstream PR
+
+1. Create a new personal fork with no repository variables, secrets, runners, or App installation.
+2. Follow only the updated documentation to bootstrap the runner and OIDC identity.
+3. Confirm an omitted Scenario C network variable fails before Azure login/deployment work begins.
+4. Confirm an invalid/overlapping address plan fails before resource creation.
+5. Confirm a deployment identity without role-assignment authority gets an explicit authorization error at the assignment step.
+6. Link the runner VNet to an existing Blob private DNS zone in a different resource group and verify state bootstrap reuses it.
+7. Run Scenario C deployment from fork `main` and verify OIDC, private state, ACR, Key Vault, peering, and agent reconciliation.
+8. Verify the deployment summary uses “Key Vault key” and accurately names the Monitoring Contributor exception.
+9. Verify the GitHub App is installed only on the fork with Metadata Read, Contents Read/Write, and Pull requests Read/Write.
+10. Tear down the deployed profile, then remove runner bootstrap resources and subscription-scope assignments using the documented cleanup path.
+
+## Detailed findings and rationale
 
 ### 1. Critical: the documented Reader-only RBAC guarantee is inaccurate
 
