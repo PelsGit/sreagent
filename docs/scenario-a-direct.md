@@ -110,7 +110,7 @@ a credentials JSON secret — deployment authenticates with OIDC only.
 | Scenario | `A` | Selects the High / Contributor / Autonomous profile |
 | Resource name prefix | `contosopay` | Any short lowercase prefix works |
 | Environment label | `demo` | Appears in names and the state key |
-| Azure region | `swedencentral` | Any region where SRE Agent is available |
+| Azure region | `<chosen-supported-region>` | Choose a region currently available to your subscription; see Microsoft's [SRE Agent supported-regions guidance](https://learn.microsoft.com/azure/sre-agent/supported-regions) |
 | Open incident PR | `false` | Scenario A arms the incident directly, not by PR |
 
 **Expect.** The run takes roughly 15–25 minutes. It bootstraps isolated remote

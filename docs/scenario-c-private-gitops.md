@@ -232,6 +232,36 @@ handing a GitHub App key to the SRE Agent service.
 
 ## Phase 2 — Deploy
 
+### Choose a region for this run
+
+Do not treat any region in an example or workflow default as a permanent
+recommendation. Regional capacity changes over time: a region that provisions
+successfully today can reject a new Container Apps environment later, while a
+different supported region may work.
+
+Before dispatching the workflow:
+
+1. Check Microsoft's current [SRE Agent supported-regions
+   list](https://learn.microsoft.com/azure/sre-agent/supported-regions), then
+   select your subscription at <https://sre.azure.com> and inspect the
+   **Region** dropdown. Microsoft documents that this dropdown is the
+   subscription-specific view of available SRE Agent regions.
+2. Choose a listed region that meets your data-residency and organizational
+   requirements. The agent's region determines where its compute runs; with
+   the appropriate permissions it can still investigate resources in other
+   regions.
+3. Treat a supported/available listing as eligibility, not a capacity
+   reservation. Azure regions have independent quota and capacity constraints,
+   and those constraints can change.
+
+If deployment returns `ManagedEnvironmentNoAvailableCapacityInRegion`, retry
+later or select another currently supported region that satisfies your
+requirements. Do **not** change the location of a partial deployment in place:
+an SRE Agent's region cannot be changed after creation, and Container Apps
+regional relocation recreates the managed environment. Destroy the partial
+profile, delete its isolated state blob, confirm cleanup completed, and then
+dispatch a clean deployment with the new region.
+
 ### Step 6. Run the deploy workflow
 
 **Do.** Go to **Actions → deploy → Run workflow** and set:
@@ -241,7 +271,7 @@ handing a GitHub App key to the SRE Agent service.
 | Scenario | `C` | Selects the private-network profile |
 | Resource name prefix | `contosopay` | Any short lowercase prefix works |
 | Environment label | `demo` | Appears in names and the state key |
-| Azure region | `swedencentral` | Any region where SRE Agent is available |
+| Azure region | `<chosen-supported-region>` | Choose it for this run using the region and capacity guidance above |
 | Open incident PR | `false` | Leave this off; you arm the incident live in step 12 |
 
 **Expect.** The job is picked up by your labelled private runner and then:
@@ -258,10 +288,12 @@ handing a GitHub App key to the SRE Agent service.
    `agent/scenario-c/manifest.json`;
 7. **verifies** the resulting agent state.
 
-**This is the only deploy run you need.** Earlier revisions of this runbook
-required two — one to create the Key Vault, then a manual key import, then a
-second run to connect Code Access. The import now happens between the apply and
-the reconcile in the same job, so the chicken-and-egg is gone.
+**One successful deploy run configures the whole profile.** Earlier revisions
+of this runbook required two planned runs — one to create the Key Vault, then a
+manual key import, then a second run to connect Code Access. The import now
+happens between the apply and the reconcile in the same job, so there is no
+planned two-pass bootstrap. A provider-capacity or other deployment failure can
+still require cleanup and a fresh run.
 
 **Expect on success.** The workflow summary lists the resource group, ACR,
 frontend URL, the activation variables, and a Scenario C bootstrap note
@@ -616,6 +648,7 @@ not own them.
 | The agent site will not load, or chat returns `unauthorized` | No SRE Agent data-plane role — subscription Owner is not enough | Grant a role at agent scope; see [operator access](sre-agent-setup.md#operator-access-to-the-agent) |
 | Terraform fails reaching the state account | The runner cannot reach the private endpoint, or peering is missing | Verify `RUNNER_NETWORK_RG`, `RUNNER_VNET_NAME`, `RUNNER_PE_SUBNET_NAME` and runner network reachability |
 | Peering or subnet creation fails | Application and runner address spaces overlap | Override `APP_VNET_ADDRESS_SPACE` and the subnet prefixes |
+| Container Apps environment fails with `ManagedEnvironmentNoAvailableCapacityInRegion` | The selected region currently has no capacity for a new managed environment | Retry later, or destroy the partial profile and deploy cleanly in another region shown for your subscription; never change a partial profile's location in place |
 | Code Access reconciliation fails | Partial configuration — App, key, or variables missing | Set all three variables together, or leave `SRE_CODE_ACCESS_ENABLED` unset |
 | Reconciliation fails with "Key Vault secret URIs are no longer supported" | The App credential was stored as a Key Vault *secret* | Import it as a **key** instead; see [step 6](#step-6-run-the-deploy-workflow) |
 | The Key Vault does not exist yet | The key was imported by hand before the first deploy | Run [step 6](#step-6-run-the-deploy-workflow) first; the vault name is generated during that run |
@@ -714,6 +747,9 @@ complexity without removing the REST reconciliation phase.
 - [Deploy Azure SRE Agent with infrastructure as code](https://learn.microsoft.com/azure/sre-agent/deploy-iac)
 - [Azure SRE Agent API reference](https://learn.microsoft.com/azure/sre-agent/api-reference)
 - [Azure SRE Agent ARM template reference](https://learn.microsoft.com/azure/templates/microsoft.app/agents)
+- [Azure SRE Agent supported regions and region-selection guidance](https://learn.microsoft.com/azure/sre-agent/supported-regions)
+- [Azure guidance for selecting regions and planning for capacity](https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-setup-guide/regions)
+- [Relocate Azure Container Apps to another region](https://learn.microsoft.com/azure/container-apps/relocate-region)
 - [Azure SRE Agent network integration](https://learn.microsoft.com/azure/sre-agent/network-integration)
 - [Azure SRE Agent MCP connectors](https://learn.microsoft.com/azure/sre-agent/mcp-connectors)
 - [Microsoft SRE Agent reference repository](https://github.com/microsoft/sre-agent)

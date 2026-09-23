@@ -112,7 +112,7 @@ SRE Agent portal that no workflow ever sees.
 | Scenario | `B` | Selects the Low / Reader / Review profile |
 | Resource name prefix | `contosopay` | Any short lowercase prefix works |
 | Environment label | `demo` | Appears in names and the state key |
-| Azure region | `swedencentral` | Any region where SRE Agent is available |
+| Azure region | `<chosen-supported-region>` | Choose a region currently available to your subscription; see Microsoft's [SRE Agent supported-regions guidance](https://learn.microsoft.com/azure/sre-agent/supported-regions) |
 | Open incident PR | `false` | Leave this off; you will arm the incident live in step 13 |
 
 **Expect.** The run takes roughly 15–25 minutes and:

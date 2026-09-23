@@ -1,10 +1,10 @@
-# Scenario C Phase 1 clean-fork feedback and proposed changes
+# Scenario C clean-fork feedback and proposed changes
 
 This is upstream feedback produced by running the documentation from a real fork.
 
 - **Upstream repository:** `rutgerpels/sreagent`
 - **Test fork:** `PelsGit/sreagent`
-- **Reviewed upstream commit:** `df8cd30`
+- **Reviewed commits:** `df8cd30` through `aed247f`
 - **Primary document:** `docs/scenario-c-private-gitops.md`
 - **Audience assumed:** technical engineers and architects evaluating Azure SRE Agent
 
@@ -16,11 +16,22 @@ The fork was treated as an independent repository: GitHub Actions settings, OIDC
 - **Step 2 — private runner:** reused the already-provisioned resources in the dedicated resource group `rg-sreagent-scenario-c-runner`. Started the deallocated `Standard_D4s_v5` x64 VM and verified the repository runner `sreagent-scenario-c` is online and idle with exactly `self-hosted`, `Linux`, `X64`, `azure-private`, and `contosopay`. On the VM, Docker `29.1.3` and Azure CLI `2.90.0` are operational, and outbound HTTPS to GitHub and Azure Resource Manager succeeds.
 - **Step 3 — Code Access choice:** GitHub App path selected, matching the intended Scenario C story.
 - **Step 4 — GitHub App:** repository configuration contains a GitHub App client ID, key-name variable, enable flag, and PEM secret metadata. The App's live permissions and repository-only installation could not be independently read with the available GitHub user token; those settings remain a manual UI verification item before Phase 2.
-- **Step 5 — variables and secret:** verified all nine App-path repository variables and the PEM secret name exist. Verified the OIDC deployment identity is a user-assigned managed identity in the dedicated runner resource group, with federation subject `repo:PelsGit/sreagent:ref:refs/heads/main`. It has Contributor and User Access Administrator at subscription scope. Verified the runner VNet is `10.50.0.0/16`, while the documented application default is `10.100.0.0/16`, so the default ranges do not overlap.
+- **Step 5 — variables and secret:** verified all nine App-path repository variables and the PEM secret name exist. Verified the OIDC deployment identity is a user-assigned managed identity in the dedicated runner resource group. Its live GitHub assertion used the immutable-ID-enhanced subject `repo:PelsGit@74572400/sreagent@1356333733:ref:refs/heads/main`, not the legacy name-only subject. The identity has Contributor and User Access Administrator at subscription scope. Verified the runner VNet is `10.50.0.0/16`, while the documented application default is `10.100.0.0/16`, so the default ranges do not overlap.
 - Verified GitHub Actions is enabled, all five workflows are active, this is a fork of `rutgerpels/sreagent`, and no workflow has yet run in the fork.
 - Verified `Microsoft.App` is registered and `Microsoft.App/agents` is available in Sweden Central.
 
-No Scenario C application/state resources were deployed; Phase 2 was not started.
+## Phase 2 execution status
+
+- Started the deallocated runner VM and verified the repository runner was online and idle before each dispatch.
+- The first deployment proved the fork emitted an immutable-ID-enhanced OIDC subject. Added that exact subject to the managed identity; subsequent OIDC logins succeeded.
+- The self-hosted runner lacked `unzip`, which `hashicorp/setup-terraform` requires. Installed it on the runner and verified the executable before retrying.
+- The first platform apply exposed a private-DNS dependency race: app-VNet links could run before their managed zones existed. Added a regression test and direct Terraform references; fix `aed247f` is on `main`.
+- Sweden Central rejected two new Container Apps managed environments with `ManagedEnvironmentNoAvailableCapacityInRegion`. One failed operation later left an environment outside Terraform state, and Azure took more than ten minutes to delete it.
+- Destroyed the partial Sweden Central profile through the verified destroy workflow, deleted its isolated state blob, confirmed the resource group was absent, and then selected another currently supported region rather than converting the partial profile in place.
+- France Central completed successfully in one clean run. Image publication, application apply, GitHub App key import, Code Access reconciliation, and agent verification all passed. The public frontend returned HTTP 200.
+- Set and read back `TF_PREFIX=contosopay`, `TF_ENVIRONMENT=demo`, and `DEPLOYMENT_SCENARIO=C`, then granted and verified the operator's SRE Agent Administrator role.
+
+The capacity result is deliberately not a recommendation for France Central over Sweden Central. Capacity changes over time. The runbook should tell operators how to choose a currently suitable region, preserve data-residency requirements, and recover cleanly when a supported region lacks capacity at deployment time.
 
 ## Recommended upstream change set
 
@@ -43,7 +54,7 @@ I would split the correction into four reviewable commits while keeping them in 
    subject:  repo:<fork-owner>/<repository>:ref:refs/heads/main
    ```
 
-   Include commands to create the identity and federated credential, assign the tested Azure roles/scopes, set the three repository variables, and read everything back for verification. State that the production dispatch must run from the trusted `main` ref.
+   Include commands to create the identity and federated credential, assign the tested Azure roles/scopes, set the three repository variables, and read everything back for verification. State that the production dispatch must run from the trusted `main` ref. Also note that GitHub can emit immutable-ID-enhanced subjects such as `repo:<owner>@<owner-id>/<repository>@<repository-id>:ref:refs/heads/main`; the live assertion printed by `azure/login` is authoritative.
 3. Replace “Owner or User Access Administrator” with separate requirements for:
    - the human bootstrap operator; and
    - the OIDC deployment identity.
@@ -213,9 +224,31 @@ The repository secret is materialized on a network-connected persistent runner. 
 
 Without Code Access, the agent can still investigate and describe/propose the fix in chat; it cannot create the remediation branch and pull request. Adjust the wording accordingly.
 
-## Items requiring Phase 2 evidence
+### 13. High: region examples need explicit capacity and recovery guidance
 
-- Whether the existing GitHub App's live permissions and repository selection exactly match Step 4.
-- Whether OIDC login succeeds from the fork's `main` workflow with the current managed identity.
-- Whether `az ad sp show --id "$ARM_CLIENT_ID"` succeeds for the minimally authenticated deployment identity without extra Microsoft Graph directory permissions.
-- Whether existing enterprise-managed Blob private DNS creates a conflict in a shared-network tenant.
+**Runbook:** `docs/scenario-c-private-gitops.md:235-264`, troubleshooting
+
+Microsoft's SRE Agent guidance says to check the current supported-region list and then use the portal's subscription-specific Region dropdown. It recommends choosing for data residency and clarifies that the agent region determines where agent compute runs, not which authorized cross-region resources it can investigate. Microsoft's broader Azure region guidance says regional quota and capacity constraints can affect deployment and should be planned for.
+
+Do not prescribe Sweden Central, France Central, or any other region as permanently preferred. Replace the fixed example with `<chosen-supported-region>` and tell the operator to:
+
+1. inspect the current SRE Agent regions available to the subscription;
+2. choose one that satisfies residency and organizational requirements;
+3. treat a supported-region listing as eligibility, not reserved capacity;
+4. retry later or choose another suitable supported region after `ManagedEnvironmentNoAvailableCapacityInRegion`;
+5. destroy the partial profile and isolated state before changing regions, because SRE Agent and Container Apps regional resources are recreated rather than moved in place.
+
+Also soften “This is the only deploy run you need” to “One successful deploy run configures the whole profile.” The single-pass credential bootstrap is real, but provider-capacity failures can still require cleanup and a fresh run.
+
+Authoritative references:
+
+- <https://learn.microsoft.com/azure/sre-agent/supported-regions>
+- <https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-setup-guide/regions>
+- <https://learn.microsoft.com/azure/container-apps/relocate-region>
+
+## Phase 2 evidence resolved
+
+- OIDC login succeeds from fork `main` after registering the exact immutable-ID-enhanced assertion subject.
+- `az ad sp show --id "$ARM_CLIENT_ID"` succeeds for this managed identity and tenant.
+- Code Access reconciliation and verification pass with the configured GitHub App and Key Vault key. The App's ability to create a remediation pull request remains an incident-phase verification rather than a Phase 2 check.
+- This runner VNet had no foreign Blob private DNS zone, so the enterprise-managed Blob-zone conflict remains untested.
